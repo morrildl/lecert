@@ -1,0 +1,9 @@
+[submodule "src/vendor/golang.org/x/crypto"]
+	path = src/vendor/golang.org/x/crypto
+	url = https://go.googlesource.com/crypto
+[submodule "src/vendor/playground/log"]
+	path = src/vendor/playground/log
+	url = ssh://code.playground.global:29418/studio/playground/log
+[submodule "src/vendor/playground/config"]
+	path = src/vendor/playground/config
+	url = ssh://code.playground.global:29418/studio/playground/config
