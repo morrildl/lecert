@@ -241,10 +241,32 @@ func createCSR() []byte {
 	return csrBytes
 }
 
+func readyForRenewal() bool {
+	b, err := ioutil.ReadFile(cfg.ServerCertPath)
+	if err != nil {
+		return true
+	}
+
+	block, _ := pem.Decode(b)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		log.Warn("readyForRenewal", "current cert exists but doesn't parse", err)
+		return true
+	}
+
+	// renew after 59 days to avoid trigger letsencrypt 30-day warnings
+	return time.Now().After(cert.NotBefore.Add(59 * 24 * time.Hour))
+}
+
 func main() {
 	config.Load(&cfg)
 	if cfg.Debug {
 		log.SetLogLevel(log.LEVEL_DEBUG)
+	}
+
+	if !readyForRenewal() {
+		log.Status("main", "current cert is not due for renewal; exiting")
+		return
 	}
 
 	defer func() {
@@ -324,4 +346,6 @@ func main() {
 
 		log.Debug("main", "skipping challenge", a.Type)
 	}
+
+	log.Status("main", "certificate renewed")
 }
