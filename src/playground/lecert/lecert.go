@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -39,7 +40,7 @@ func (cfg *configType) cfZoneURL() string {
 
 var cfg configType
 
-func createChallengeRecord(fqdn, value string) string {
+func createDNS01ChallengeRecord(fqdn, value string) string {
 	key := fmt.Sprintf("_acme-challenge.%s", fqdn)
 	payload := struct {
 		Type    string `json:"type"`
@@ -85,7 +86,7 @@ func createChallengeRecord(fqdn, value string) string {
 	return v.Result.ID
 }
 
-func cleanupChallengeRecord(id string) {
+func cleanupDNS01ChallengeRecord(id string) {
 	url := fmt.Sprintf("%s/%s", cfg.cfZoneURL(), id)
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
@@ -114,32 +115,164 @@ func cleanupChallengeRecord(id string) {
 	log.Debug("cleanupChallengeRecord", "deleted TXT", id)
 }
 
+func doWithTimeout(root context.Context, f func(context.Context)) {
+	dur, _ := time.ParseDuration("7s")
+	ctx, cancel := context.WithTimeout(root, dur)
+	f(ctx)
+	cancel()
+}
+
+func loadAccount() (*acme.Account, *rsa.PrivateKey) {
+	// attempt to load & parse the RSA (PCKS#1v1.5) key file for the account
+	pkcs, err := ioutil.ReadFile(cfg.AccountKeyPath)
+	if err != nil {
+		log.Debug("loadAccount", "error loading account key (may simply not exist)", err)
+		return nil, nil
+	}
+	key, err := x509.ParsePKCS1PrivateKey(pkcs)
+	if err != nil {
+		log.Warn("loadAccount", "error parsing account key", err)
+		return nil, nil
+	}
+
+	// attempt to load & parse a JSON file representing the account with LE
+	jsn, err := ioutil.ReadFile(cfg.AccountJSONPath)
+	if err != nil {
+		log.Debug("loadAccount", "error loading account data (may simply not exist)", err)
+		return nil, nil
+	}
+	acct := &acme.Account{}
+	if err := json.Unmarshal(jsn, acct); err != nil {
+		log.Warn("loadAccount", "error parsing account json", err)
+		return nil, nil
+	}
+
+	return acct, key
+}
+
+func initClient(parent context.Context) *acme.Client {
+	var err error
+
+	account, key := loadAccount()
+	client := &acme.Client{}
+
+	// if we didn't find an account, create one & store it for next time
+	if account == nil {
+		account = &acme.Account{Contact: []string{cfg.AccountEmail}}
+
+		// TODO: probably should upgrade this to use ECC at some point,
+		// but Go currently has no implementation for Curve25519, and the P-256 curve is sketchy.
+		// So use overkill RSA for now.
+		key, err = rsa.GenerateKey(rand.Reader, 4096)
+		if err != nil {
+			panic(err)
+		}
+		client.Key = key
+
+		pkcs := x509.MarshalPKCS1PrivateKey(key)
+		if err = ioutil.WriteFile(cfg.AccountKeyPath, pkcs, 0600); err != nil {
+			panic(err)
+		}
+
+		doWithTimeout(parent, func(ctx context.Context) {
+			if account, err = client.Register(ctx, account, func(tosURL string) bool { return true }); err != nil {
+				panic(err)
+			}
+		})
+
+		jsn, err := json.Marshal(account)
+		if err != nil {
+			panic(err)
+		}
+		if err = ioutil.WriteFile(cfg.AccountJSONPath, jsn, 0600); err != nil {
+			panic(err)
+		}
+	}
+
+	client.Key = key
+
+	return client
+}
+
+func createCSR() []byte {
+	var key *rsa.PrivateKey
+
+	// if we couldn't find the server key, generate one
+	pkcs, err := ioutil.ReadFile(cfg.ServerKeyPath)
+	if err != nil {
+		log.Debug("createCSR", "couldn't locate ServerKeyPath, generating new")
+		key, err = rsa.GenerateKey(rand.Reader, 4096)
+		if err != nil {
+			panic(err)
+		}
+		pkcs = x509.MarshalPKCS1PrivateKey(key)
+
+		// wrap in PEM since servers (even some that should know better, nginx I'm looking at you)
+		// tend to assume PEM instead of raw DER
+		pkcs = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: pkcs})
+
+		if err = ioutil.WriteFile(cfg.ServerKeyPath, pkcs, 0600); err != nil {
+			panic(err)
+		}
+	} else {
+		block, _ := pem.Decode(pkcs)
+		if key, err = x509.ParsePKCS1PrivateKey(block.Bytes); err != nil {
+			panic(err)
+		}
+	}
+
+	// TODO: should move the x509 subject segments to config, in case someone non-PG wants to use it
+	csr := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			Country:      []string{"US"},
+			Province:     []string{"CA"},
+			Locality:     []string{"Palo Alto"},
+			Organization: []string{"Playground Global"},
+			CommonName:   cfg.FQDN,
+		},
+		DNSNames:  []string{cfg.FQDN},
+		PublicKey: key.PublicKey,
+	}
+	csrBytes, err := x509.CreateCertificateRequest(rand.Reader, csr, key)
+	if err != nil {
+		panic(err)
+	}
+
+	return csrBytes
+}
+
 func main() {
 	config.Load(&cfg)
 	if cfg.Debug {
 		log.SetLogLevel(log.LEVEL_DEBUG)
 	}
 
-	k, err := rsa.GenerateKey(rand.Reader, 4096)
-	if err != nil {
-		panic(err)
-	}
-	dur, _ := time.ParseDuration("5s")
-	root := context.Background()
-	client := &acme.Client{Key: k}
-	account := &acme.Account{Contact: []string{"mailto:morrildl@playground.global"}}
-	ctx, cancel := context.WithTimeout(root, dur)
-	if account, err = client.Register(ctx, account, func(tosURL string) bool { return true }); err != nil {
-		panic(err)
-	}
-	cancel()
+	defer func() {
+		if err := recover(); err != nil {
+			log.Error("main", "exiting on panic", err)
+		}
+	}()
 
-	ctx, cancel = context.WithTimeout(root, dur)
-	authz, err := client.Authorize(ctx, cfg.FQDN)
-	if err != nil {
-		panic(err)
-	}
-	cancel()
+	root := context.Background()
+
+	csr := createCSR()
+
+	client := initClient(root)
+
+	var (
+		err   error
+		authz *acme.Authorization
+		c     *acme.Challenge
+		crt   [][]byte
+	)
+
+	doWithTimeout(root, func(ctx context.Context) {
+		authz, err = client.Authorize(ctx, cfg.FQDN)
+		if err != nil {
+			panic(err)
+		}
+	})
+
 	for _, a := range authz.Challenges {
 		if a.Type == "dns-01" {
 			// sign the challenge generated by LE
@@ -149,54 +282,40 @@ func main() {
 			}
 
 			// cram the response into DNS, and wait briefly to propagate
-			id := createChallengeRecord(cfg.FQDN, v)
-			defer cleanupChallengeRecord(id)
-			dur, _ = time.ParseDuration("10s")
+			id := createDNS01ChallengeRecord(cfg.FQDN, v)
+			defer cleanupDNS01ChallengeRecord(id)
+			dur, _ := time.ParseDuration("10s")
 			time.Sleep(dur)
 
 			// tell LE to check DNS
-			ctx, cancel = context.WithTimeout(root, dur)
-			c, err := client.Accept(ctx, a)
-			if err != nil {
-				panic(err)
-			}
-			cancel()
-			log.Debug("main", "accepted challenge with status", c.Status)
-
-			// generate some keymatter to turn into a certificate
-			server, err := rsa.GenerateKey(rand.Reader, 2048)
-			if err != nil {
-				panic(err)
-			}
-			csr := &x509.CertificateRequest{
-				Subject: pkix.Name{
-					Country:      []string{"US"},
-					Province:     []string{"CA"},
-					Locality:     []string{"Palo Alto"},
-					Organization: []string{"Playground Global"},
-					CommonName:   cfg.FQDN,
-				},
-				DNSNames:  []string{cfg.FQDN},
-				PublicKey: server.PublicKey,
-			}
-			csrBytes, err := x509.CreateCertificateRequest(rand.Reader, csr, server)
-			if err != nil {
-				panic(err)
-			}
-
-			// ask LE for the certificate
-			ctx, cancel = context.WithTimeout(root, dur)
-			crt, _, err := client.CreateCert(ctx, csrBytes, 90*24*time.Hour, true)
-			if err != nil {
-				panic(err)
-			}
-			cancel()
-
-			// write cert to disk
-			for i, b := range crt {
-				if err = ioutil.WriteFile(fmt.Sprintf("out%02d.crt", i), b, 0766); err != nil {
+			doWithTimeout(root, func(ctx context.Context) {
+				c, err = client.Accept(ctx, a)
+				if err != nil {
 					panic(err)
 				}
+			})
+
+			log.Debug("main", "accepted challenge with status", c.Status)
+
+			time.Sleep(dur)
+
+			// ask LE for the certificate
+			doWithTimeout(root, func(ctx context.Context) {
+				crt, _, err = client.CreateCert(ctx, csr, 59*24*time.Hour, true)
+				if err != nil {
+					panic(err)
+				}
+			})
+
+			// write cert to disk
+			bundle := bytes.Buffer{}
+			for _, b := range crt {
+				b = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: b})
+				bundle.Write(b)
+			}
+			b := bundle.Bytes()
+			if err = ioutil.WriteFile(cfg.ServerCertPath, b, 0600); err != nil {
+				panic(err)
 			}
 
 			// we're good after one challenge

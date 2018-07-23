@@ -1,8 +1,8 @@
 {
   "Debug": true,
   "FQDN": "chocobo.domain.tld",
-  "AccountPath": "/pg/lecerts/account.key",
-  "AccountJSON": "/pg/lecerts/account.json",
+  "AccountKeyPath": "/pg/lecerts/account.key",
+  "AccountJSONPath": "/pg/lecerts/account.json",
   "AccountEmail": "netops@domain.tld",
   "ServerCertPath": "/pg/lecerts/server.crt",
   "ServerKeyPath": "/pg/lecerts/server.key",
