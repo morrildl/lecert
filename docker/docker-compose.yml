@@ -1,0 +1,20 @@
+version: '3.6'
+
+services:
+  lecert:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: pg/lecert
+    volumes:
+      - certs:/certs
+    environment:
+      FQDN: ${FQDN}
+      ACCOUNT_EMAIL: ${ACCOUNT_EMAIL}
+      CLOUDFLARE_EMAIL: ${CLOUDFLARE_EMAIL}
+      CLOUDFLARE_SECRET: ${CLOUDFLARE_SECRET}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID}
+
+# Certs will be saved here.
+volumes:
+  certs:
