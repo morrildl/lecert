@@ -7,3 +7,6 @@
 [submodule "src/vendor/playground/config"]
 	path = src/vendor/playground/config
 	url = ssh://code.playground.global:29418/studio/playground/config
+[submodule "src/vendor/playground/apiclient"]
+	path = src/vendor/playground/apiclient
+	url = ssh://code.playground.global:29418/studio/playground/apiclient
