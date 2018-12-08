@@ -3,10 +3,10 @@
 	url = https://go.googlesource.com/crypto
 [submodule "src/vendor/playground/log"]
 	path = src/vendor/playground/log
-	url = ssh://code.playground.global:29418/studio/playground/log
+	url = https://github.com/morrildl/playground-log
 [submodule "src/vendor/playground/config"]
 	path = src/vendor/playground/config
-	url = ssh://code.playground.global:29418/studio/playground/config
+	url = https://github.com/morrildl/playground-config
 [submodule "src/vendor/playground/apiclient"]
 	path = src/vendor/playground/apiclient
-	url = ssh://code.playground.global:29418/studio/playground/apiclient
+	url = https://github.com/morrildl/playground-apiclient

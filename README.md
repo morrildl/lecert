@@ -1,51 +1,30 @@
-# Let's Encrypt Cert Generator
+# `lecert`: letsencrypt.org via Cloudflare DNS
 
-### Update git submodules
-```
-$ git submodule init
-$ git submodule sync
-```
+This is a simple client for users of Cloudflare DNS, that implements the ACME DNS01 challenge
+protocol using [letsencrypt.org](letsencrypt.org) as the CA, written in Go. The directory
+`./playground/lecert` contains that code, and the directory `./docker` can construct a Docker
+image for conveniently running it, for those who swing that way.
 
-### Setup environment variables.
-Create a file `docker/.env` with contents
-```
-export FQDN=""
-export ACCOUNT_EMAIL=""
-export CLOUDFLARE_EMAIL=""
-export CLOUDFLARE_SECRET=""
-export CLOUDFLARE_ZONE_ID=""
-```
+It also includes a related dynamc-DNS client to Cloudflare DNS, as `./playground/ddns`.
 
-### Load environment variables
-```
-$ source docker/.env
-```
+Special thanks to Playground Global, LLC for open-sourcing this software. See the `LICENSE` file
+for details.
 
-### Build docker image
-```
-$ cd docker
-$ docker-compose build
-```
+# Usage
 
-### Start docker container
-```
-$ cd docker
-$ docker-compose up -d
-```
+Fetch the source:
 
-### Getting a copy of the certs.
-* Spin up a container just to mount up the volume
-```
-$ docker run --rm -it --name certs -v ssl_certs:/certs debian:stretch-slim /bin/bash
-root@e94cec4c9352:/# ls /certs
-account.json  account.key  talent.playground.global.crt talent.playground.global.key
-```
+    git clone --recursive https://github.com/morrildl/lecert
 
-* In another terminal, copy the files out.
-```
-$ mkdir /tmp/erase
-$ cd /tmp/erase
-/tmp/erase $ docker cp certs:/certs/. .
-/tmp/erase $ ls
-account.json                    account.key                     talent.playground.global.crt    talent.playground.global.key
-```
+Build the binary:
+
+    GOPATH=`pwd` go build src/playground/lecert/cmd/lecert.go
+
+Create a config file using `./etc/config-example.json` as a starting point; enter your Cloudflare
+account ID, etc.
+
+Run the binary:
+
+    ./lecert -config ./my-config.json
+
+Usage is very similar for `ddns`. See `./docker/README.md` for details on the Docker container.

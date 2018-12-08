@@ -1,0 +1,8 @@
+{
+  "Debug": true,
+  "FQDN": "chocobo.domain.tld",
+  "IPReflectorURL": "http://api.ipify.org/",
+  "CloudflareEmail": "netops@domain.tld",
+  "CloudflareSecret": "",
+  "CloudflareZoneID": ""
+}
